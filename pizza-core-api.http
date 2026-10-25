@@ -1,0 +1,48 @@
+@pizza_core_api_HostAddress = http://localhost:5056
+@token = <вставь JWT, полученный в запросе логина>
+
+### 1. Создать сессию (логин) - публичный метод
+POST {{pizza_core_api_HostAddress}}/api/v1/sessions
+Content-Type: application/json
+
+{
+  "phone": "+375291234567",
+  "password": "password123"
+}
+
+### 2. Регистрация покупателя - публичный метод
+POST {{pizza_core_api_HostAddress}}/api/v1/users
+Content-Type: application/json
+
+{
+  "name": "Иван Иванов",
+  "email": "ivan@example.com",
+  "phone": "+375291234567",
+  "password": "password123",
+  "role": "CUSTOMER"
+}
+
+### 3. Список пицц - публичный метод
+GET {{pizza_core_api_HostAddress}}/api/v1/pizzas?pageNumber=1&pageSize=10
+Accept: application/json
+
+### 4. Список ингредиентов - публичный метод
+GET {{pizza_core_api_HostAddress}}/api/v1/ingredients?pageNumber=1&pageSize=10
+Accept: application/json
+
+### 5. Текущий пользователь по токену
+GET {{pizza_core_api_HostAddress}}/api/v1/sessions/current/user
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### 6. Список заказов
+GET {{pizza_core_api_HostAddress}}/api/v1/orders?pageNumber=1&pageSize=10
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### 7. Разлогин (отзыв токена)
+DELETE {{pizza_core_api_HostAddress}}/api/v1/sessions/current
+Authorization: Bearer {{token}}
+
+### Swagger UI: {{pizza_core_api_HostAddress}}/swagger
+
