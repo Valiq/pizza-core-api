@@ -40,57 +40,55 @@ namespace pizza_core_api.Core.Services
 
         public async Task<Pizza> GetPizzaSql(long id, MySqlConnection connection, bool needHideDeleted)
         {
-            var sql = @"
+            // Запрос 1: получаем пиццу по id (с информацией о пользователе, который обновил)
+            var pizzaSql = @"
             SELECT 
                 p.id, 
                 p.type, 
-                p.size, 
                 p.name, 
                 p.base_price as basePrice, 
-                p.image_path as imagePath, 
                 p.is_deleted as isDeleted, 
-                DATE_FORMAT(p.created_at, ''%Y-%m-%dT%H:%i:%s'') as createdAt, 
-                DATE_FORMAT(p.updated_at, ''%Y-%m-%dT%H:%i:%s'') as updatedAt, 
+                DATE_FORMAT(p.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt, 
+                DATE_FORMAT(p.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt, 
                 updater.id, 
                 updater.name, 
-                updater.role,
-                i.id, 
-                i.name, 
-                i.type
+                updater.role
             FROM pizza p
             LEFT JOIN user updater ON p.updated_by = updater.id
-            LEFT JOIN pizza_ingredient pi ON p.id = pi.pizza_id
-            LEFT JOIN ingredient i ON pi.ingredient_id = i.id AND i.is_deleted = false
             WHERE p.id = @id";
 
             if (needHideDeleted)
-                sql = $"{sql} AND p.is_deleted = false"; 
+                pizzaSql = $"{pizzaSql} AND p.is_deleted = false";
 
-            var pizza = (await connection.QueryAsync<Pizza, UserShort, List <IngredientShort>, Pizza>(
-                sql,
-                (pizza, updater, ingredients) =>
+            var pizza = (await connection.QueryAsync<Pizza, UserShort, Pizza>(
+                pizzaSql,
+                (pizza, updater) =>
                 {
-                    return new Pizza
-                    {
-                        id = pizza.id,
-                        type = pizza.type,
-                        size = pizza.size,
-                        name = pizza.name,
-                        basePrice = pizza.basePrice,
-                        imagePath = pizza.imagePath,
-                        isDeleted = pizza.isDeleted,
-                        createdAt = pizza.createdAt,
-                        updatedAt = pizza.updatedAt,
-                        updatedBy = updater,
-                        ingredients = ingredients
-                    };
+                    pizza.updatedBy = updater;
+                    pizza.ingredients = new List<IngredientShort>();
+                    return pizza;
                 },
                 new { id },
                 splitOn: "id"
             )).FirstOrDefault();
 
             if (pizza is null)
-                throw new KeyNotFoundException($"Пицца {id} не найдена");
+                throw new KeyNotFoundException($"Пицца с id = {id} не найдена");
+
+            // Запрос 2: получаем ингредиенты пиццы
+            var ingredientsSql = @"
+            SELECT 
+                i.id, 
+                i.name, 
+                i.type
+            FROM ingredient i
+            INNER JOIN pizza_ingredient pi ON i.id = pi.ingredient_id
+            WHERE pi.pizza_id = @id";
+
+            var ingredients = (await connection.QueryAsync<IngredientShort>(ingredientsSql, new { id })).ToList();
+
+            // Объединяем всё в один ответ
+            pizza.ingredients = ingredients;
 
             return pizza;
         }
@@ -139,12 +137,6 @@ namespace pizza_core_api.Core.Services
                     parameters.Add("Type", $"%{request.type}%");
                 }
 
-                if (!string.IsNullOrEmpty(request.size))
-                {
-                    whereConditions.Add("p.size LIKE @Size");
-                    parameters.Add("Size", $"%{request.size}%");
-                }
-
                 if (!string.IsNullOrEmpty(request.createdAtStart))
                 {
                     whereConditions.Add("p.created_at >= @CreatedAtStart");
@@ -172,7 +164,6 @@ namespace pizza_core_api.Core.Services
                     ["id"] = "p.id",
                     ["name"] = "p.name",
                     ["type"] = "p.type",
-                    ["size"] = "p.size",
                     ["baseprice"] = "p.base_price",
                     ["createdat"] = "p.created_at",
                     ["updatedat"] = "p.updated_at"
@@ -198,13 +189,11 @@ namespace pizza_core_api.Core.Services
                     SELECT
                         p.id,
                         p.type,
-                        p.size,
                         p.name,
                         p.base_price as basePrice,
-                        p.image_path as imagePath,
                         p.is_deleted as isDeleted,
-                        DATE_FORMAT(p.created_at, ''%Y-%m-%dT%H:%i:%s'') as createdAt,
-                        DATE_FORMAT(p.updated_at, ''%Y-%m-%dT%H:%i:%s'') as updatedAt,
+                        DATE_FORMAT(p.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt,
+                        DATE_FORMAT(p.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt,
                         p.updated_by,
                         updater.id,
                         updater.name,
@@ -214,8 +203,8 @@ namespace pizza_core_api.Core.Services
                         i.type as ing_type,
                         i.base_price as ing_basePrice,
                         i.is_deleted as ing_isDeleted,
-                        DATE_FORMAT(i.created_at, ''%Y-%m-%dT%H:%i:%s'') as ing_createdAt,
-                        DATE_FORMAT(i.updated_at, ''%Y-%m-%dT%H:%i:%s'') as ing_updatedAt,
+                        DATE_FORMAT(i.created_at, '%Y-%m-%dT%H:%i:%s') as ing_createdAt,
+                        DATE_FORMAT(i.updated_at, '%Y-%m-%dT%H:%i:%s') as ing_updatedAt,
                         iu.id as ing_updater_id,
                         iu.name as ing_updater_name,
                         iu.role as ing_updater_type
@@ -245,10 +234,8 @@ namespace pizza_core_api.Core.Services
                         {
                             id = pizzaId,
                             type = row.type,
-                            size = row.size,
                             name = row.name,
                             basePrice = row.basePrice,
-                            imagePath = row.imagePath,
                             isDeleted = row.isDeleted,
                             createdAt = row.createdAt,
                             updatedAt = row.updatedAt,
@@ -285,26 +272,30 @@ namespace pizza_core_api.Core.Services
 
         public async Task<Pizza> CreatePizza(PizzaCreateRequest request, string? token)
         {
+            if (request.basePrice < 1)
+                throw new ArgumentException("Базовая цена не может быть меньше 1");
+
             UserRole[] roles = { UserRole.Admin, UserRole.Customer };
 
             var parsed = await SessionService.CheckGrants(token, roles);
+
+            if (!PizzaType.IsValid(request.type))
+                throw new ArgumentException($"Недопустимый тип пиццы: {request.type}. Допустимые значения: {PizzaType.Castom.Code}, {PizzaType.Standart.Code}.");
 
             using (MySqlConnection connection = new MySqlConnection(Configuration.GetValue<string>("ConnectionString")))
             {
                 await connection.OpenAsync();
 
                 var sql = @"
-                        INSERT INTO pizza (name, type, size, base_price, image_path, updated_by)
-                        VALUES (@name, @type, @size, @basePrice, @imagePath, @updatedBy);
+                        INSERT INTO pizza (name, type, base_price, updated_by)
+                        VALUES (@name, @type, @basePrice, @updatedBy);
                         SELECT LAST_INSERT_ID();";
 
                 var parameters = new
                 {
                     request.name,
                     request.type,
-                    request.size,
                     request.basePrice,
-                    request.imagePath,
                     updatedBy = parsed.Value.userId
                 };
 
@@ -333,6 +324,9 @@ namespace pizza_core_api.Core.Services
 
         public async Task<Pizza> UpdatePizza(long id, PizzaUpdateRequest request, string token)
         {
+            if (request.basePrice < 1)
+                throw new ArgumentException("Базовая цена не может быть меньше 1");
+
             UserRole[] roles = { UserRole.Admin };
 
             var parsed = await SessionService.CheckGrants(token, roles);
@@ -348,20 +342,21 @@ namespace pizza_core_api.Core.Services
                 if (pizzaExists == 0)
                     throw new KeyNotFoundException($"Пицца не найдена по заданному Id = {id}");
 
+                if (request.type is not null && !PizzaType.IsValid(request.type))
+                    throw new ArgumentException($"Недопустимый тип пиццы: {request.type}. Допустимые значения: {PizzaType.Castom.Code}, {PizzaType.Standart.Code}.");
+
                 var parameters = new
                 {
                     request.name,
                     request.type,
-                    request.size,
                     request.basePrice,
-                    request.imagePath,
                     updatedBy = parsed.Value.userId,
                     id
                 };
 
                 var sql = $@"
                     UPDATE pizza
-                    SET name = @name, type = @type, size = @size, base_price = @basePrice, image_path = @imagePath, updated_by = @updatedBy
+                    SET name = @name, type = @type, base_price = @basePrice, updated_by = @updatedBy
                     WHERE id = @id";
 
                 await connection.ExecuteAsync(sql, parameters);

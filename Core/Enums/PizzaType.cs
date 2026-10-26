@@ -25,6 +25,14 @@
             return code ?? "";
         }
 
+        public static bool IsValid(string? code)
+        {
+            if (string.IsNullOrEmpty(code))
+                return false;
+
+            return code == Castom.Code || code == Standart.Code;
+        }
+
         public override string ToString() => Name;
     }
 }

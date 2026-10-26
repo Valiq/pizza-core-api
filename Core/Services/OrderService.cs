@@ -64,7 +64,6 @@ namespace pizza_core_api.Core.Services
                 DATE_FORMAT(op.created_at, '%Y-%m-%dT%H:%i:%s') as orderPizzaCreatedAt,
                 p.id as pizzaId,
                 p.type as pizzaType,
-                p.size as pizzaSize,
                 p.name as pizzaName,
                 p.base_price as pizzaBasePrice,
                 p.image_path as pizzaImagePath,
@@ -308,7 +307,6 @@ namespace pizza_core_api.Core.Services
                         {
                             id = (long)row.pizzaId,
                             type = (string)row.pizzaType,
-                            size = (string)row.pizzaSize,
                             name = (string)row.pizzaName,
                             basePrice = (decimal)row.pizzaBasePrice,
                             imagePath = (string)row.pizzaImagePath,

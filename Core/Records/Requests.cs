@@ -91,8 +91,6 @@ namespace pizza_core_api.Core.Records
             [Required]
             string type,
             [Required]
-            string size,
-            [Required]
             decimal basePrice,
             string? imagePath,
             [Required]
@@ -104,7 +102,6 @@ namespace pizza_core_api.Core.Records
             [MaxLength(100)]
             string name,
             string? type,
-            string? size,
             decimal? basePrice,
             string? imagePath,
             long[]? ingredients
@@ -113,7 +110,6 @@ namespace pizza_core_api.Core.Records
         public record PizzaFilterRequest(
             string? name,
             string? type,
-            string? size,
             bool? isDeleted,
             string? createdAtStart,
             string? createdAtEnd,
@@ -135,7 +131,6 @@ namespace pizza_core_api.Core.Records
             string? createdAtEnd,
             string? sortBy,
             string? sortType,
-            bool? isAvailable,
             [Required]
             int pageNumber,
 
@@ -153,9 +148,7 @@ namespace pizza_core_api.Core.Records
             string type,
 
             [Required]
-            decimal basePrice,
-
-            bool? isAvailable
+            decimal basePrice
         );
 
         public record IngredientUpdateRequest(
@@ -165,9 +158,7 @@ namespace pizza_core_api.Core.Records
 
             string? type,
 
-            decimal? basePrice,
-
-            bool? isAvailable
+            decimal? basePrice
         );
 
         public record AdressCreateRequest(

@@ -45,6 +45,20 @@
             return code ?? "";
         }
 
+        public static bool IsValid(string? code)
+        {
+            if (string.IsNullOrEmpty(code))
+                return false;
+
+            return code == Sauces.Code ||
+                   code == Cheeses.Code ||
+                   code == MeatProducts.Code ||
+                   code == Seafood.Code ||
+                   code == Greens.Code ||
+                   code == Mushrooms.Code ||
+                   code == OtherToppings.Code;
+        }
+
         public override string ToString() => Name;
     }
 }

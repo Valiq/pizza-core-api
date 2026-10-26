@@ -4,7 +4,6 @@
     {
         public long id { get; set; }
         public string type { get; set; }
-        public string size { get; set; }
         public string name { get; set; }
         public decimal basePrice { get; set; }
         public string imagePath { get; set; }

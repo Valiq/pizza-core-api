@@ -44,49 +44,32 @@ namespace pizza_core_api.Core.Services
          
         public async Task<UserResponse> GetUserSql(long id, MySqlConnection connection, bool needHideDeleted)
         {
-            var sql = @"
-                    SELECT 
-                        u.id, 
-                        u.name, 
-                        u.email, 
+            // Запрос 1: получаем пользователя по id (вместе с тем, кто обновлял запись)
+            var userSql = @"
+                    SELECT
+                        u.id,
+                        u.name,
+                        u.email,
                         u.phone,
-                        u.is_deleted as isDeleted, 
+                        u.is_deleted as isDeleted,
                         DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt,
                         DATE_FORMAT(u.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt,
-                        creator.id, 
+                        creator.id,
                         creator.name,
-                        creator.role as type,
-                        a.city,
-                        a.street,
-                        a.house,
-                        a.apartment,
-                        DATE_FORMAT(a.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt,
-                        DATE_FORMAT(a.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt
+                        creator.role as type
                     FROM user u
                     LEFT JOIN user creator ON u.updated_by = creator.id
-                    LEFT JOIN adress a ON a.user_id = u.id
                     WHERE u.id = @id";
 
             if (needHideDeleted)
-                sql = $"{sql} AND u.is_deleted = false";
+                userSql = $"{userSql} AND u.is_deleted = false";
 
-            var user = (await connection.QueryAsync<User, UserShort, List<Adress>, UserResponse>(
-                sql,
-                (user, creator, adresses) =>
+            var user = (await connection.QueryAsync<User, UserShort, User>(
+                userSql,
+                (user, creator) =>
                 {
-                    return new UserResponse
-                    (
-                        id: user.id,
-                        name: user.name,
-                        email: user.email,
-                        phone: user.phone,
-                        role: user.role,
-                        isDeleted: user.isDeleted,
-                        createdAt: user.createdAt,
-                        updatedAt: user.updatedAt,
-                        adresses: adresses,
-                        updatedBy: creator
-                    );
+                    user.updatedBy = creator;
+                    return user;
                 },
                 new { id },
                 splitOn: "id"
@@ -95,7 +78,33 @@ namespace pizza_core_api.Core.Services
             if (user is null)
                 throw new KeyNotFoundException($"Пользователь {id} не найден или удалён");
 
-            return user;
+            // Запрос 2: получаем адреса пользователя
+            var adressSql = @"
+                    SELECT
+                        a.id,
+                        a.city,
+                        a.street,
+                        a.house,
+                        a.apartment,
+                        DATE_FORMAT(a.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt,
+                        DATE_FORMAT(a.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt
+                    FROM adress a
+                    WHERE a.user_id = @id";
+
+            var adresses = (await connection.QueryAsync<Adress>(adressSql, new { id })).ToList();
+
+            return new UserResponse(
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone,
+                role: user.role,
+                isDeleted: user.isDeleted,
+                createdAt: user.createdAt,
+                updatedAt: user.updatedAt,
+                adresses: adresses,
+                updatedBy: user.updatedBy
+            );
         }
 
         public async Task<UsersResponse> GetUsersPaged(UserFilterRequest request, string token)
@@ -225,19 +234,19 @@ namespace pizza_core_api.Core.Services
                         u.phone,
                         u.role,
                         u.is_deleted as isDeleted,
-                        DATE_FORMAT(u.created_at, ''%Y-%m-%dT%H:%i:%s'') as createdAt,
-                        DATE_FORMAT(u.updated_at, ''%Y-%m-%dT%H:%i:%s'') as updatedAt,
+                        DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt,
+                        DATE_FORMAT(u.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt,
                         u.updated_by,
                         creator.id as creator_id,
                         creator.name as creator_name,
                         creator.role as creator_type,
-                        a.id as adress_id,
-                        a.city as adress_city,
-                        a.street as adress_street,
-                        a.house as adress_house,
-                        a.apartment as adress_apartment,
-                        DATE_FORMAT(a.created_at, ''%Y-%m-%dT%H:%i:%s'') as adress_createdAt,
-                        DATE_FORMAT(a.updated_at, ''%Y-%m-%dT%H:%i:%s'') as adress_updatedAt
+                        a.id as adressId,
+                        a.city as adressCity,
+                        a.street as adressStreet,
+                        a.house as adressHouse,
+                        a.apartment as adressApartment,
+                        DATE_FORMAT(a.created_at, '%Y-%m-%dT%H:%i:%s') as adressCreatedAt,
+                        DATE_FORMAT(a.updated_at, '%Y-%m-%dT%H:%i:%s') as adressUpdatedAt
                     FROM USER u
                     LEFT JOIN USER creator ON u.updated_by = creator.id
                     LEFT JOIN adress a ON a.user_id = u.id
@@ -248,7 +257,7 @@ namespace pizza_core_api.Core.Services
                 parameters.Add("PageSize", request.pageSize);
                 parameters.Add("Offset", offset);
 
-                                var userCache = new Dictionary<long, UserResponse>();
+                var userCache = new Dictionary<long, UserResponse>();
 
                 var rows = await connection.QueryAsync(sql, parameters);
 
@@ -269,24 +278,24 @@ namespace pizza_core_api.Core.Services
                             updatedAt: row.updatedAt,
                             adresses: new List<Adress>(),
                             updatedBy: row.creator_id is not null
-                                ? new UserShort { id = row.creator_id, name = row.creator_name, type = row.creator_type }
+                                ? new UserShort { id = row.creatorId, name = row.creatorName, type = row.creatorType }
                                 : null
                         );
                         userCache[userId] = userResponse;
                     }
 
-                    if (row.adress_id is not null)
+                    if (row.adressId is not null)
                     {
                         userResponse.adresses.Add(new Adress
                         {
-                            id = row.adress_id,
+                            id = row.adressId,
                             user = new UserShort { id = userId, name = row.name, type = row.role },
-                            city = row.adress_city,
-                            street = row.adress_street,
-                            house = row.adress_house,
-                            apartment = row.adress_apartment,
-                            createdAt = row.adress_createdAt,
-                            updatedAt = row.adress_updatedAt
+                            city = row.adressCity,
+                            street = row.adressStreet,
+                            house = row.adressHouse,
+                            apartment = row.adressApartment,
+                            createdAt = row.adressCreatedAt,
+                            updatedAt = row.adressUpdatedAt
                         });
                     }
                 }
@@ -447,3 +456,4 @@ namespace pizza_core_api.Core.Services
 
     }
 }
+

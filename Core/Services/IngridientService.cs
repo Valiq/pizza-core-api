@@ -83,18 +83,19 @@ namespace pizza_core_api.Core.Services
             )).FirstOrDefault();
 
             if (ingredient is null)
-                throw new KeyNotFoundException($"Ингредиент с идентификатором {id} не найден или удалён");
+                throw new KeyNotFoundException($"Ингредиент с идентификатором {id} не найден или удален");
 
             return ingredient;
         }
 
         public async Task<IngredientsResponse> GetIngredientsPaged(IngredientFilterRequest request, string? token)
         {
+            int pageNumber = request.pageNumber <= 0 ? 1 : request.pageNumber;
+            int pageSize = request.pageSize <= 0 ? 10 : request.pageSize;
             using (MySqlConnection connection = new MySqlConnection(Configuration.GetValue<string>("ConnectionString")))
             {
                 await connection.OpenAsync();
-
-                int offset = (request.pageNumber - 1) * request.pageSize;
+                int offset = (pageNumber - 1) * pageSize;
 
                 var whereConditions = new List<string>();
                 var parameters = new DynamicParameters();
@@ -172,7 +173,7 @@ namespace pizza_core_api.Core.Services
                     {whereClause}";
 
                 int totalCount = await connection.ExecuteScalarAsync<int>(countSql, parameters);
-                int totalPages = (int)Math.Ceiling(totalCount / (double)request.pageSize);
+                int totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
 
                 var sql = $@"
                     SELECT
@@ -192,7 +193,7 @@ namespace pizza_core_api.Core.Services
                     {orderByClause}
                     LIMIT @PageSize OFFSET @Offset";
 
-                parameters.Add("PageSize", request.pageSize);
+                parameters.Add("PageSize", pageSize);
                 parameters.Add("Offset", offset);
 
                 var ingredients = (await connection.QueryAsync<Ingredient, UserShort, Ingredient>(
@@ -209,8 +210,8 @@ namespace pizza_core_api.Core.Services
                 return new IngredientsResponse(
                     ingredients,
                     totalCount,
-                    request.pageNumber,
-                    request.pageSize,
+                    pageNumber,
+                    pageSize,
                     totalPages
                 );
             }
@@ -218,6 +219,9 @@ namespace pizza_core_api.Core.Services
 
         public async Task<Ingredient> UpdateIngredient(long id, IngredientUpdateRequest request, string? token)
         {
+            if (request.basePrice < 1)
+                throw new ArgumentException("Базовая цена не может быть меньше 1");
+
             UserRole[] roles = { UserRole.Admin };
 
             var parsed = await SessionService.CheckGrants(token, roles);
@@ -231,6 +235,9 @@ namespace pizza_core_api.Core.Services
 
                 if (ingredientExists == 0)
                     throw new KeyNotFoundException($"Ингредиент не найден по заданному Id = {id}");
+
+                if (request.type is not null && !ProductType.IsValid(request.type))
+                    throw new ArgumentException($"Недопустимый тип ингредиента: {request.type}. Допустимые значения: {ProductType.Sauces.Code}, {ProductType.Cheeses.Code}, {ProductType.MeatProducts.Code}, {ProductType.Seafood.Code}, {ProductType.Greens.Code}, {ProductType.Mushrooms.Code}, {ProductType.OtherToppings.Code}.");
 
                 var parameters = new
                 {
@@ -257,6 +264,9 @@ namespace pizza_core_api.Core.Services
 
         public async Task<Ingredient> CreateIngredient(IngredientCreateRequest request, string token)
         {
+            if (request.basePrice < 1)
+                throw new ArgumentException("Базовая цена не может быть меньше 1");
+
             UserRole[] roles = { UserRole.Admin };
 
             var parsed = await SessionService.CheckGrants(token, roles);
@@ -264,6 +274,9 @@ namespace pizza_core_api.Core.Services
             using (MySqlConnection connection = new MySqlConnection(Configuration.GetValue<string>("ConnectionString")))
             {
                 await connection.OpenAsync();
+
+                if (!ProductType.IsValid(request.type))
+                    throw new ArgumentException($"Недопустимый тип ингредиента: {request.type}. Допустимые значения: {ProductType.Sauces.Code}, {ProductType.Cheeses.Code}, {ProductType.MeatProducts.Code}, {ProductType.Seafood.Code}, {ProductType.Greens.Code}, {ProductType.Mushrooms.Code}, {ProductType.OtherToppings.Code}.");
 
                 var sql = @"
                     INSERT INTO ingredient (name, type, base_price, updated_by)
@@ -298,7 +311,7 @@ namespace pizza_core_api.Core.Services
                 var ingredientExists = await connection.ExecuteScalarAsync<int>(ingredientExistsSql, new { id });
 
                 if (ingredientExists == 0)
-                    throw new KeyNotFoundException("Ингредиент не найден или уже удален");
+                    throw new KeyNotFoundException("Ингредиент не найден или удален");
 
                 var deleteSql = @"
                     UPDATE ingredient
