@@ -47,6 +47,7 @@ namespace pizza_core_api.Core.Services
                 p.type, 
                 p.name, 
                 p.base_price as basePrice, 
+                p.image_path as imagePath,
                 p.is_deleted as isDeleted, 
                 DATE_FORMAT(p.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt, 
                 DATE_FORMAT(p.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt, 
@@ -99,7 +100,11 @@ namespace pizza_core_api.Core.Services
             {
                 await connection.OpenAsync();
 
-                int offset = (request.pageNumber - 1) * request.pageSize;
+                // Нормализация пагинации: если фильтры не переданы, pageNumber/pageSize приходят как 0
+                int pageNumber = request.pageNumber < 1 ? 1 : request.pageNumber;
+                int pageSize = request.pageSize < 1 ? 10 : request.pageSize;
+
+                int offset = (pageNumber - 1) * pageSize;
 
                 var whereConditions = new List<string>();
                 var parameters = new DynamicParameters();
@@ -110,20 +115,19 @@ namespace pizza_core_api.Core.Services
                 {
                     UserRole[] roles = { UserRole.Admin, UserRole.Customer };
                     var parsed = await SessionService.CheckGrants(token, roles);
-                    isAdmin = (parsed.Value.userRole != UserRole.Admin.Code);
+                    isAdmin = (parsed.Value.userRole == UserRole.Admin.Code);
                 }
 
-                whereConditions.Add("p.is_deleted = @IsDeleted");
-
-                if (request is not null)
+                if (isAdmin && request.isDeleted is not null)
                 {
-                    if (isAdmin)
-                        parameters.Add("IsDeleted", request.isDeleted ?? true);
-                    else
-                        parameters.Add("IsDeleted", false);
+                    whereConditions.Add("p.is_deleted = @IsDeleted");
+                    parameters.Add("IsDeleted", request.isDeleted);
                 }
                 else if (!isAdmin)
+                {
+                    whereConditions.Add("p.is_deleted = @IsDeleted");
                     parameters.Add("IsDeleted", false);
+                }
 
                 if (!string.IsNullOrEmpty(request.name))
                 {
@@ -183,7 +187,9 @@ namespace pizza_core_api.Core.Services
                     {whereClause}";
 
                 int totalCount = await connection.ExecuteScalarAsync<int>(countSql, parameters);
-                int totalPages = (int)Math.Ceiling(totalCount / (double)request.pageSize);
+                int totalPages = pageSize > 0
+                    ? (int)Math.Ceiling(totalCount / (double)pageSize)
+                    : 0;
 
                 var sql = $@"
                     SELECT
@@ -191,6 +197,7 @@ namespace pizza_core_api.Core.Services
                         p.type,
                         p.name,
                         p.base_price as basePrice,
+                        p.image_path as imagePath,
                         p.is_deleted as isDeleted,
                         DATE_FORMAT(p.created_at, '%Y-%m-%dT%H:%i:%s') as createdAt,
                         DATE_FORMAT(p.updated_at, '%Y-%m-%dT%H:%i:%s') as updatedAt,
@@ -217,7 +224,7 @@ namespace pizza_core_api.Core.Services
                     {orderByClause}
                     LIMIT @PageSize OFFSET @Offset";
 
-                parameters.Add("PageSize", request.pageSize);
+                parameters.Add("PageSize", pageSize);
                 parameters.Add("Offset", offset);
 
                 var pizzaCache = new Dictionary<long, Pizza>();
@@ -263,8 +270,8 @@ namespace pizza_core_api.Core.Services
                 return new PizzasResponse(
                     pizzas,
                     totalCount,
-                    request.pageNumber,
-                    request.pageSize,
+                    pageNumber,
+                    pageSize,
                     totalPages
                 );
             }
@@ -287,8 +294,8 @@ namespace pizza_core_api.Core.Services
                 await connection.OpenAsync();
 
                 var sql = @"
-                        INSERT INTO pizza (name, type, base_price, updated_by)
-                        VALUES (@name, @type, @basePrice, @updatedBy);
+                        INSERT INTO pizza (name, type, base_price, image_path, updated_by)
+                        VALUES (@name, @type, @basePrice, @imagePath, @updatedBy);
                         SELECT LAST_INSERT_ID();";
 
                 var parameters = new
@@ -296,6 +303,7 @@ namespace pizza_core_api.Core.Services
                     request.name,
                     request.type,
                     request.basePrice,
+                    request.imagePath,
                     updatedBy = parsed.Value.userId
                 };
 
@@ -350,13 +358,14 @@ namespace pizza_core_api.Core.Services
                     request.name,
                     request.type,
                     request.basePrice,
+                    request.imagePath,
                     updatedBy = parsed.Value.userId,
                     id
                 };
 
                 var sql = $@"
                     UPDATE pizza
-                    SET name = @name, type = @type, base_price = @basePrice, updated_by = @updatedBy
+                    SET name = @name, type = @type, base_price = @basePrice, image_path = @imagePath, updated_by = @updatedBy
                     WHERE id = @id";
 
                 await connection.ExecuteAsync(sql, parameters);

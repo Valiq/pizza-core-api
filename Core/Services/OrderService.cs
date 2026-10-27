@@ -137,48 +137,119 @@ namespace pizza_core_api.Core.Services
 
             var parsed = await SessionService.CheckGrants(token, roles);
 
+            // Корректируем некорректные значения пагинации (как в других сервисах)
+            int pageNumber = request.pageNumber < 1 ? 1 : request.pageNumber;
+            int pageSize = request.pageSize < 1 ? 50 : request.pageSize;
+            int offset = (pageNumber - 1) * pageSize;
+
             using (MySqlConnection connection = new MySqlConnection(Configuration.GetValue<string>("ConnectionString")))
             {
                 await connection.OpenAsync();
 
-                int offset = (request.pageNumber - 1) * request.pageSize;
-
-                var whereConditions = new List<string>();
+                // Условия только по таблице `order` (алиас o2/o3)
+                var orderConditions = new List<string>();
+                // Условия по связанным таблицам order_pizza/pizza (алиас op./p.)
+                var joinedConditions = new List<string>();
                 var parameters = new DynamicParameters();
 
                 if (!string.IsNullOrEmpty(request.status))
                 {
-                    whereConditions.Add("o2.status = @Status");
+                    orderConditions.Add("o2.status = @Status");
                     parameters.Add("Status", request.status);
                 }
 
                 if (!string.IsNullOrEmpty(request.paymentType))
                 {
-                    whereConditions.Add("o2.payment_type = @PaymentType");
+                    orderConditions.Add("o2.payment_type = @PaymentType");
                     parameters.Add("PaymentType", request.paymentType);
+                }
+
+                if (request.totalPriceFrom.HasValue)
+                {
+                    orderConditions.Add("o2.total_price >= @TotalPriceFrom");
+                    parameters.Add("TotalPriceFrom", request.totalPriceFrom.Value);
+                }
+
+                if (request.totalPriceTo.HasValue)
+                {
+                    orderConditions.Add("o2.total_price <= @TotalPriceTo");
+                    parameters.Add("TotalPriceTo", request.totalPriceTo.Value);
                 }
 
                 if (!string.IsNullOrEmpty(request.createdAtStart))
                 {
-                    whereConditions.Add("o2.created_at >= @CreatedAtStart");
+                    orderConditions.Add("o2.created_at >= @CreatedAtStart");
                     parameters.Add("CreatedAtStart", request.createdAtStart);
                 }
 
                 if (!string.IsNullOrEmpty(request.createdAtEnd))
                 {
-                    whereConditions.Add("o2.created_at <= @CreatedAtEnd");
+                    orderConditions.Add("o2.created_at <= @CreatedAtEnd");
                     parameters.Add("CreatedAtEnd", request.createdAtEnd);
                 }
 
                 // Покупатель видит только свои заказы
                 if (parsed.Value.userRole != UserRole.Admin.Code)
                 {
-                    whereConditions.Add("o2.user_id = @UserId");
+                    orderConditions.Add("o2.user_id = @UserId");
                     parameters.Add("UserId", parsed.Value.userId);
                 }
 
-                string whereClause = whereConditions.Count > 0
-                    ? $"WHERE {string.Join(" AND ", whereConditions)}"
+                if (!string.IsNullOrEmpty(request.divisionType))
+                {
+                    joinedConditions.Add("op.division_type = @DivisionType");
+                    parameters.Add("DivisionType", request.divisionType);
+                }
+
+                if (!string.IsNullOrEmpty(request.pizzaSize))
+                {
+                    joinedConditions.Add("op.size = @Size");
+                    parameters.Add("Size", request.pizzaSize);
+                }
+
+                if (!string.IsNullOrEmpty(request.pizzaName))
+                {
+                    joinedConditions.Add("p.name LIKE @PizzaName");
+                    parameters.Add("PizzaName", $"%{request.pizzaName}%");
+                }
+
+                string orderWhere = orderConditions.Count > 0
+                    ? $"WHERE {string.Join(" AND ", orderConditions)}"
+                    : "";
+
+                // EXISTS-подзапрос для фильтров по order_pizza/pizza, чтобы не размножать строки
+                // в derived-таблице страницы (и не ломать LIMIT/OFFSET пагинацию).
+                string BuildJoinedExists(string orderAlias)
+                {
+                    if (joinedConditions.Count == 0)
+                        return "";
+
+                    string conditions = string.Join(" AND ", joinedConditions)
+                        .Replace("op.", "opx.")
+                        .Replace("p.", "px.");
+
+                    return $"EXISTS (SELECT 1 FROM order_pizza opx LEFT JOIN pizza px ON opx.pizza_id = px.id WHERE opx.order_id = {orderAlias}.id AND {conditions})";
+                }
+
+                string joinedExistsPage = BuildJoinedExists("o3");
+                string joinedExistsCount = BuildJoinedExists("o2");
+
+                var countConds = new List<string>();
+                if (orderConditions.Count > 0)
+                    countConds.Add(string.Join(" AND ", orderConditions));
+                if (!string.IsNullOrEmpty(joinedExistsCount))
+                    countConds.Add(joinedExistsCount);
+                string whereClause = countConds.Count > 0
+                    ? $"WHERE {string.Join(" AND ", countConds)}"
+                    : "";
+
+                var pageConds = new List<string>();
+                if (orderConditions.Count > 0)
+                    pageConds.Add(string.Join(" AND ", orderConditions).Replace("o2.", "o3."));
+                if (!string.IsNullOrEmpty(joinedExistsPage))
+                    pageConds.Add(joinedExistsPage);
+                string whereClausePage = pageConds.Count > 0
+                    ? $"WHERE {string.Join(" AND ", pageConds)}"
                     : "";
 
                 var validSortColumns = new Dictionary<string, string>
@@ -201,10 +272,6 @@ namespace pizza_core_api.Core.Services
 
                 // Один запрос: сначала выбираем страницу идентификаторов заказов (derived table),
                 // затем одним JOIN-ом подтягиваем вложенные сущности (пиццы, ингредиенты и т.д.)
-                string whereClausePage = whereConditions.Count > 0
-                    ? $"WHERE {string.Join(" AND ", whereConditions).Replace("o2.", "o3.")}"
-                    : "";
-
                 string sortColumnPage = sortColumn.Replace("o2.", "o3.");
 
                 var sql = $@"
@@ -224,21 +291,21 @@ namespace pizza_core_api.Core.Services
                     {OrderJoins}
                     ORDER BY page.sortKey {sortType}, o.id ASC, op.id ASC, opi.id ASC, bi.id ASC";
 
-                parameters.Add("PageSize", request.pageSize);
+                parameters.Add("PageSize", pageSize);
                 parameters.Add("Offset", offset);
 
                 var rows = (await connection.QueryAsync(sql, parameters)).ToList();
 
                 int totalCount = rows.Count > 0 ? (int)(long)rows[0].totalCount : 0;
-                int totalPages = (int)Math.Ceiling(totalCount / (double)request.pageSize);
+                int totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
 
                 var orders = MapOrders(rows);
 
                 return new OrdersResponse(
                     orders,
                     totalCount,
-                    request.pageNumber,
-                    request.pageSize,
+                    pageNumber,
+                    pageSize,
                     totalPages
                 );
             }
@@ -471,8 +538,8 @@ namespace pizza_core_api.Core.Services
                             && pizzaRequest.doughType != DoughType.Lush.Code)
                             throw new ArgumentException($"Недопустимый тип теста: {pizzaRequest.doughType}");
 
-                        if (string.IsNullOrEmpty(pizzaRequest.edgeType))
-                            throw new ArgumentException("Не указан тип борта пиццы");
+                        if (!EdgeType.IsValid(pizzaRequest.edgeType))
+                            throw new ArgumentException($"Недопустимый тип борта пиццы: {pizzaRequest.edgeType}");
 
                         double sizeMultiplier = Size.GetMultiplier(pizzaRequest.size);
 

@@ -90,8 +90,15 @@ namespace pizza_core_api.Core.Services
 
         public async Task<IngredientsResponse> GetIngredientsPaged(IngredientFilterRequest request, string? token)
         {
+            // Валидация параметров пагинации
+            if (request.pageNumber < 1)
+                throw new ArgumentException("Номер страницы должен быть больше или равен 1", nameof(request.pageNumber));
+            if (request.pageSize < 1)
+                throw new ArgumentException("Размер страницы должен быть больше или равен 1", nameof(request.pageSize));
+
             int pageNumber = request.pageNumber <= 0 ? 1 : request.pageNumber;
             int pageSize = request.pageSize <= 0 ? 10 : request.pageSize;
+
             using (MySqlConnection connection = new MySqlConnection(Configuration.GetValue<string>("ConnectionString")))
             {
                 await connection.OpenAsync();
@@ -106,20 +113,19 @@ namespace pizza_core_api.Core.Services
                 {
                     UserRole[] roles = { UserRole.Admin, UserRole.Customer };
                     var parsed = await SessionService.CheckGrants(token, roles);
-                    isAdmin = (parsed.Value.userRole != UserRole.Admin.Code);
+                    isAdmin = (parsed.Value.userRole == UserRole.Admin.Code);
                 }
 
-                whereConditions.Add("i.is_deleted = @IsDeleted");
-
-                if (request is not null)
+                if (isAdmin && request.isDeleted is not null)
                 {
-                    if (isAdmin)
-                        parameters.Add("IsDeleted", request.isDeleted ?? true);
-                    else
-                        parameters.Add("IsDeleted", false);
+                    whereConditions.Add("p.is_deleted = @IsDeleted");
+                    parameters.Add("IsDeleted", request.isDeleted);
                 }
                 else if (!isAdmin)
+                {
+                    whereConditions.Add("p.is_deleted = @IsDeleted");
                     parameters.Add("IsDeleted", false);
+                }
 
                 if (!string.IsNullOrEmpty(request.name))
                 {

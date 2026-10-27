@@ -115,6 +115,9 @@ namespace pizza_core_api.Core.Services
             if (parsed is null)
                 throw new UnauthorizedAccessException("Недостаточно прав для просмотра списка пользователей");
 
+            int pageNumber = request.pageNumber < 1 ? 1 : request.pageNumber;
+            int pageSize = request.pageSize < 1 ? 10 : request.pageSize;
+
             using (MySqlConnection connection = new MySqlConnection(Configuration.GetValue<string>("ConnectionString")))
             {
                 await connection.OpenAsync();
@@ -148,6 +151,13 @@ namespace pizza_core_api.Core.Services
                 {
                     whereConditions.Add("u.phone LIKE @Phone");
                     parameters.Add("Phone", $"%{request.phone}%");
+                }
+
+                // Фильтрация по адресу (поиск по LIKE в полях city, street, house, apartment)
+                if (!string.IsNullOrEmpty(request.adress))
+                {
+                    whereConditions.Add("(a.city LIKE @Adress OR a.street LIKE @Adress OR a.house LIKE @Adress OR a.apartment LIKE @Adress)");
+                    parameters.Add("Adress", $"%{request.adress}%");
                 }
 
                 // Фильтрация по ролям (роль хранится строкой в user.role)
@@ -217,9 +227,10 @@ namespace pizza_core_api.Core.Services
 
                 // SQL для получения общего количества записей
                 var countSql = $@"
-                    SELECT COUNT(*)
+                    SELECT COUNT(DISTINCT u.id)
                     FROM USER u
                     LEFT JOIN USER creator ON u.updated_by = creator.id
+                    LEFT JOIN adress a ON a.user_id = u.id
                     {whereClause}";
 
                 int totalCount = await connection.ExecuteScalarAsync<int>(countSql, parameters);
@@ -278,7 +289,7 @@ namespace pizza_core_api.Core.Services
                             updatedAt: row.updatedAt,
                             adresses: new List<Adress>(),
                             updatedBy: row.creator_id is not null
-                                ? new UserShort { id = row.creatorId, name = row.creatorName, type = row.creatorType }
+                                ? new UserShort { id = row.creator_id, name = row.creator_name, type = row.creator_type }
                                 : null
                         );
                         userCache[userId] = userResponse;
@@ -323,24 +334,70 @@ namespace pizza_core_api.Core.Services
                 await connection.OpenAsync();
 
                 // Проверка существования пользователя
-                var userExistsSql = "SELECT COUNT(*) FROM user WHERE id = @userId AND is_deleted = false";
+                var userExistsSql = "SELECT COUNT(*) FROM user WHERE id = @id    AND is_deleted = false";
                 var userExists = await connection.ExecuteScalarAsync<int>(userExistsSql, new { id });
 
                 if (userExists == 0)
                     throw new KeyNotFoundException($"Пользователь не найден по заданному Id = {id}");
 
-                var parameters = new
+                // Проверка уникальности только для полей, переданных в запросе
+                if (request.email is not null)
                 {
-                    request.name,
-                    request.email,
-                    request.phone,
-                    request.password
-                };
+                    var emailExistsSql = @"SELECT count(*) FROM user WHERE email = @email AND id != @id AND is_deleted = false";
+                    var emailExists = await connection.ExecuteScalarAsync<int>(emailExistsSql, new { request.email, id });
+
+                    if (emailExists > 0)
+                        throw new ArgumentException("Email уже используется другим пользователем");
+                }
+
+                if (request.phone is not null)
+                {
+                    var phoneExistsSql = @"SELECT count(*) FROM user WHERE phone = @phone AND id != @id AND is_deleted = false";
+                    var phoneExists = await connection.ExecuteScalarAsync<int>(phoneExistsSql, new { request.phone, id });
+
+                    if (phoneExists > 0)
+                        throw new ArgumentException("Данный номер телефона уже используется другим пользователем");
+                }
+
+                // Обновляем только те поля, которые заполнены в запросе (не null)
+                var setClauses = new List<string>();
+                var parameters = new DynamicParameters();
+
+                if (request.name is not null)
+                {
+                    setClauses.Add("name = @name");
+                    parameters.Add("name", request.name);
+                }
+
+                if (request.email is not null)
+                {
+                    setClauses.Add("email = @email");
+                    parameters.Add("email", request.email);
+                }
+
+                if (request.phone is not null)
+                {
+                    setClauses.Add("phone = @phone");
+                    parameters.Add("phone", request.phone);
+                }
+
+                if (request.password is not null)
+                {
+                    setClauses.Add("password_hash = @passwordHash");
+                    parameters.Add("passwordHash", HashPassword(request.password));
+                }
+
+                if (setClauses.Count == 0)
+                    throw new ArgumentException("Не указано ни одного поля для обновления");
+
+                setClauses.Add("updated_by = @updatedBy");
+                parameters.Add("updatedBy", parsed.Value.userId);
+                parameters.Add("userId", id);
 
                 var sql = $@"
-                    UPDATE USER 
-                    SET name = @name, email = @email, phone = @phone, password = @password
-                    WHERE id = @userId and is_deleted = false";
+                    UPDATE USER
+                    SET {string.Join(", ", setClauses)}
+                    WHERE id = @userId AND is_deleted = false";
 
                 int affectedRows = await connection.ExecuteAsync(sql, parameters);
 

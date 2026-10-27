@@ -100,7 +100,7 @@ namespace pizza_core_api.Core.Services
 
                 var parameters = new
                 {
-                    userId = parsed.Value.userId,
+                    request.userId,
                     request.city,
                     request.street,
                     request.house,

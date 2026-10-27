@@ -35,10 +35,10 @@ namespace pizza_core_api.Core.Records
             string? sortType,
 
             [Required]
-            int pageNumber,
+            int pageNumber = 1,
 
             [Required]
-            int pageSize
+            int pageSize = 50
         );
 
         public record UserCreateRequest(
@@ -68,7 +68,7 @@ namespace pizza_core_api.Core.Records
         public record UserUpdateRequest(
             [MinLength(3)]
             [MaxLength(100)]
-            string name,
+            string? name,
 
             [EmailAddress]
             [MaxLength(255)]
@@ -80,7 +80,7 @@ namespace pizza_core_api.Core.Records
 
             [MinLength(8)]
             [MaxLength(255)]
-            string password
+            string? password
         );
 
         public record PizzaCreateRequest(
@@ -116,11 +116,10 @@ namespace pizza_core_api.Core.Records
             string? sortBy,
             string? sortType,
             long[]? ingredients,
-            bool? isBestSeller,
             [Required]
-            int pageNumber,
+            int pageNumber = 1,
             [Required]
-            int pageSize
+            int pageSize = 50
         );
 
         public record IngredientFilterRequest(
@@ -132,10 +131,10 @@ namespace pizza_core_api.Core.Records
             string? sortBy,
             string? sortType,
             [Required]
-            int pageNumber,
+            int pageNumber = 1,
 
             [Required]
-            int pageSize
+            int pageSize = 50
         );
 
         public record IngredientCreateRequest(
@@ -162,6 +161,9 @@ namespace pizza_core_api.Core.Records
         );
 
         public record AdressCreateRequest(
+            [Required]
+            long userId,
+            
             [Required]
             [MinLength(3)]
             [MaxLength(100)]
@@ -199,14 +201,19 @@ namespace pizza_core_api.Core.Records
         public record OrderFilterRequest(
             string? status,
             string? paymentType,
+            decimal? totalPriceFrom,
+            decimal? totalPriceTo,
+            string? divisionType,
+            string? pizzaSize,
+            string? pizzaName,
             string? createdAtStart,
             string? createdAtEnd,
             string? sortBy,
             string? sortType,
             [Required]
-            int pageNumber,
+            int pageNumber = 1,
             [Required]
-            int pageSize
+            int pageSize = 50
         );
 
         public record OrderCreateRequest(

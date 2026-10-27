@@ -49,7 +49,7 @@ namespace pizza_core_api.Controllers
         }
 
         [Authorize]
-        [HttpPut("{id}")]
+        [HttpPatch("{id}")]
         [ProducesResponseType(typeof(UserResponse), StatusCodes.Status200OK)]
         public async Task<IActionResult> UpdateUser([FromRoute] long id, [FromBody] UserUpdateRequest request)
         {
